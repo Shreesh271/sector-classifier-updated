@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+.venv/
+venv/
+env/
+
+cache/
+
+feedback/pending_feedback.csv
+feedback/processed_feedback.csv
+
+.DS_Store
+Thumbs.db
