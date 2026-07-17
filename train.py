@@ -1,6 +1,3 @@
-"""Train TF-IDF + LinearSVC models to predict Sector and Subsector
-from an organization's Definition text."""
-
 import os
 
 import joblib
@@ -124,8 +121,6 @@ def main() -> None:
     y_sector = df[SECTOR_COLUMN]
     y_subsector = df[SUBSECTOR_COLUMN]
 
-    # Stratified splitting requires at least 2 samples per class.
-    # Report and drop any classes that do not meet this minimum.
     sector_counts = y_sector.value_counts()
     rare_sectors = sector_counts[sector_counts < 2].index.tolist()
     subsector_counts = y_subsector.value_counts()
@@ -136,7 +131,6 @@ def main() -> None:
     if rare_subsectors:
         print(f"Warning: dropping Subsector classes with < 2 samples: {rare_subsectors}")
 
-    # --- Sector model ---
     print("\nSplitting data for Sector model...")
     sector_mask = ~y_sector.isin(rare_sectors)
     X_sector, y_sector_filtered = X[sector_mask.values], y_sector[sector_mask]
@@ -151,7 +145,6 @@ def main() -> None:
     sector_model = train_classifier(X_train, y_train)
     evaluate_model(sector_model, X_test, y_test, "Sector")
 
-    # --- Subsector model ---
     print("\nSplitting data for Subsector model...")
     subsector_mask = ~y_subsector.isin(rare_subsectors)
     X_subsector, y_subsector_filtered = X[subsector_mask.values], y_subsector[subsector_mask]
@@ -165,8 +158,7 @@ def main() -> None:
     print("Training Subsector classifier (LinearSVC)...")
     subsector_model = train_classifier(X_train_s, y_train_s)
     evaluate_model(subsector_model, X_test_s, y_test_s, "Subsector")
-
-    # --- Save artifacts ---
+    
     print("\nSaving models...")
     joblib.dump(tfidf, os.path.join(MODELS_DIR, "tfidf.pkl"))
     joblib.dump(sector_model, os.path.join(MODELS_DIR, "sector_model.pkl"))

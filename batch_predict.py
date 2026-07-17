@@ -1,12 +1,3 @@
-"""Batch pipeline: given a list of organization names, look up each
-organization's definition on Wikipedia, predict its Sector and Subsector,
-and write everything to an output Excel file.
-
-Usage:
-    python batch_predict.py --input organizations.xlsx --output results.xlsx
-    python batch_predict.py --input organizations.xlsx --column "Org Name"
-"""
-
 import argparse
 import os
 import sys

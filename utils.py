@@ -1,5 +1,3 @@
-"""Reusable text preprocessing utilities for the Sector/Subsector Classifier."""
-
 import re
 import string
 import time
@@ -14,7 +12,7 @@ from nltk.tokenize import word_tokenize
 
 
 def ensure_nltk_resources() -> None:
-    """Download required NLTK resources if not already present."""
+
     resources = {
         "tokenizers/punkt": "punkt",
         "tokenizers/punkt_tab": "punkt_tab",
