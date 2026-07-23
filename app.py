@@ -4,21 +4,28 @@ import pandas as pd
 import streamlit as st
 
 from predict import predict
-from utils import fetch_definition_from_web
+from utils import (
+    fetch_definition_from_web,
+    load_sector_mapping,
+)
 from feedback import save_reward, save_punishment
 
 st.set_page_config(page_title="Sector & Subsector Classifier", page_icon="🏢")
 
 st.title("Organization Sector & Subsector Classifier")
 
-tab_single, tab_batch = st.tabs(["Single Prediction", "Batch from Organization Names"])
+sector_mapping = load_sector_mapping()
+
+tab_single, tab_batch = st.tabs(
+    ["Single Prediction", "Batch from Organization Names"]
+)
 
 with tab_single:
     st.subheader("Single Prediction")
 
     prediction_mode = st.radio(
         "Choose Input Type",
-        ["Organization Name", "Definition"]
+        ["Organization Name", "Definition"],
     )
 
     organization_name = ""
@@ -29,7 +36,7 @@ with tab_single:
     else:
         definition_text = st.text_area(
             "Enter Organization Definition",
-            height=180
+            height=180,
         )
 
     if st.button("Predict", key="single_predict_button"):
@@ -48,9 +55,6 @@ with tab_single:
 
                 definition_text = lookup["definition"]
 
-                st.subheader("Fetched Definition")
-                st.write(definition_text)
-
             else:
                 if not definition_text.strip():
                     st.warning("Please enter a definition.")
@@ -59,50 +63,92 @@ with tab_single:
             with st.spinner("Predicting..."):
                 result = predict(definition_text)
 
-            st.success("Prediction Complete")
+            # Stash everything needed for Reward/Punish in session_state.
+            # Streamlit reruns the whole script on every button click, and
+            # since "Predict" itself is only True on the run it was clicked,
+            # the result would otherwise vanish the moment Reward/Punish is
+            # clicked. Storing it here is what lets those buttons work.
+            st.session_state.prediction_result = {
+                "organization_name": organization_name
+                if prediction_mode == "Organization Name"
+                else "Manual Definition",
+                "definition_text": definition_text,
+                "sector": result["sector"],
+                "subsector": result["subsector"],
+                "prediction_time": result["prediction_time"],
+            }
+            st.session_state.show_punish_form = False
+            st.session_state.feedback_submitted = False
 
-            st.subheader("Predicted Sector")
-            st.success(result["sector"])
+        except FileNotFoundError as exc:
+            st.error(f"Model files not found.\n\n{exc}")
 
-            st.subheader("Predicted Subsector")
-            st.success(result["subsector"])
+        except ValueError as exc:
+            st.error(str(exc))
 
-            st.subheader("Prediction Time")
-            st.info(f"{result['prediction_time']} seconds")
+        except Exception as exc:
+            st.error(f"Unexpected Error: {exc}")
 
-            st.divider()
-            st.subheader("Was this prediction correct?")
+    # Read from session_state (not local variables) so this section keeps
+    # rendering across the reruns triggered by Reward/Punish/selectbox clicks.
+    pred = st.session_state.get("prediction_result")
 
+    if pred:
+        if pred["organization_name"] != "Manual Definition":
+            st.subheader("Fetched Definition")
+            st.write(pred["definition_text"])
+
+        st.success("Prediction Complete")
+
+        st.subheader("Predicted Sector")
+        st.success(pred["sector"])
+
+        st.subheader("Predicted Subsector")
+        st.success(pred["subsector"])
+
+        st.subheader("Prediction Time")
+        st.info(f"{pred['prediction_time']} seconds")
+
+        st.divider()
+        st.subheader("Was this prediction correct?")
+
+        if st.session_state.get("feedback_submitted"):
+            st.info("Feedback already recorded for this prediction.")
+        else:
             col1, col2 = st.columns(2)
 
             with col1:
                 if st.button("👍 Reward Model", key="reward_button"):
                     save_reward(
-                        organization=organization_name if prediction_mode == "Organization Name" else "Manual Definition",
-                        definition=definition_text,
-                        predicted_sector=result["sector"],
-                        predicted_subsector=result["subsector"],
+                        organization=pred["organization_name"],
+                        definition=pred["definition_text"],
+                        predicted_sector=pred["sector"],
+                        predicted_subsector=pred["subsector"],
                     )
-
+                    st.session_state.feedback_submitted = True
                     st.success(
-                        "Prediction verified successfully. "
-                        "This example has been saved for future retraining."
+                        "Prediction verified successfully. This example has been saved for future retraining."
                     )
 
             with col2:
-                punish = st.button("👎 Punish Model", key="punish_button")
+                if st.button("👎 Punish Model", key="punish_button"):
+                    st.session_state.show_punish_form = True
 
-            if punish:
+            if st.session_state.get("show_punish_form"):
                 st.warning("Please provide the correct classification.")
 
-                correct_sector = st.text_input(
+                correct_sector = st.selectbox(
                     "Correct Sector",
-                    key="correct_sector"
+                    options=list(sector_mapping.keys()),
+                    key="correct_sector",
                 )
 
-                correct_subsector = st.text_input(
+                subsector_options = sector_mapping.get(correct_sector, [])
+
+                correct_subsector = st.selectbox(
                     "Correct Subsector",
-                    key="correct_subsector"
+                    options=subsector_options,
+                    key="correct_subsector",
                 )
 
                 reason = st.selectbox(
@@ -114,52 +160,63 @@ with tab_single:
                         "Ambiguous Definition",
                         "Other",
                     ],
-                    key="reason_select"
+                    key="reason_select",
                 )
 
                 if reason == "Other":
                     reason = st.text_area(
                         "Please specify",
-                        key="other_reason"
+                        key="other_reason",
                     )
 
                 if st.button("Submit Correction", key="submit_correction"):
-                    save_punishment(
-                        organization=organization_name if prediction_mode == "Organization Name" else "Manual Definition",
-                        definition=definition_text,
-                        predicted_sector=result["sector"],
-                        predicted_subsector=result["subsector"],
-                        correct_sector=correct_sector,
-                        correct_subsector=correct_subsector,
-                        reason=reason,
-                    )
+                    if not correct_sector or not correct_subsector:
+                        st.warning(
+                            "Please select both Sector and Subsector before submitting."
+                        )
+                    else:
+                        save_punishment(
+                            organization=pred["organization_name"],
+                            definition=pred["definition_text"],
+                            predicted_sector=pred["sector"],
+                            predicted_subsector=pred["subsector"],
+                            correct_sector=correct_sector,
+                            correct_subsector=correct_subsector,
+                            reason=reason,
+                        )
+                        st.session_state.feedback_submitted = True
+                        st.session_state.show_punish_form = False
+                        st.success(
+                            "Model Correction Submitted\n\nThe corrected labels have been stored for future retraining."
+                        )
 
-                    st.success(
-                        "Model Correction Submitted\n\n"
-                        "The corrected labels have been stored for future retraining."
-                    )
-
-        except FileNotFoundError as exc:
-            st.error(f"Model files not found.\n\n{exc}")
-
-        except ValueError as exc:
-            st.error(str(exc))
-
-        except Exception as exc:
-            st.error(f"Unexpected Error: {exc}")
 with tab_batch:
     st.write(
-        "Upload an Excel file with a list of organization names. "
-        "For each one, a definition is fetched from Wikipedia and used "
-        "to predict Sector and Subsector."
+        "Upload an Excel file with a list of organization names. For each one, a definition is fetched from Wikipedia and used to predict Sector and Subsector."
     )
+
     st.caption(
-        "Requires internet access to reach Wikipedia. Organizations without "
-        "a matching Wikipedia page will be left blank in the results."
+        "Requires internet access to reach Wikipedia. Organizations without a matching Wikipedia page will be left blank in the results."
+    )
+
+    template_df = pd.DataFrame(
+        columns=["Organization Name", "Definition", "Sector", "Subsector"]
+    )
+    template_buffer = io.BytesIO()
+    template_df.to_excel(template_buffer, index=False, engine="openpyxl")
+    template_buffer.seek(0)
+
+    st.download_button(
+        label="📄 Download Empty Template",
+        data=template_buffer,
+        file_name="sector_classifier_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="download_template_button",
     )
 
     uploaded_file = st.file_uploader(
-        "Upload Excel file (organization names in one column)", type=["xlsx"]
+        "Upload Excel file (organization names in one column)",
+        type=["xlsx"],
     )
 
     column_name = None
@@ -168,6 +225,7 @@ with tab_batch:
     if uploaded_file is not None:
         try:
             input_df = pd.read_excel(uploaded_file)
+
             if input_df.empty:
                 st.warning("The uploaded file has no rows.")
                 input_df = None
@@ -177,7 +235,8 @@ with tab_batch:
                     options=list(input_df.columns),
                     index=0,
                 )
-        except Exception as exc:  # noqa: BLE001
+
+        except Exception as exc:
             st.error(f"Could not read the uploaded file: {exc}")
 
     if input_df is not None and column_name is not None:
@@ -188,13 +247,18 @@ with tab_batch:
                 .astype(str)
                 .str.strip()
             )
+
             names = names[names != ""].reset_index(drop=True)
 
             if names.empty:
-                st.warning("No valid organization names found in the selected column.")
+                st.warning(
+                    "No valid organization names found in the selected column."
+                )
+
             else:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
+
                 records = []
                 total = len(names)
 
@@ -205,7 +269,9 @@ with tab_batch:
                     definition = lookup["definition"]
                     source = lookup["source"]
 
-                    sector, subsector = "", ""
+                    sector = ""
+                    subsector = ""
+
                     if definition:
                         try:
                             result = predict(definition)
@@ -223,19 +289,23 @@ with tab_batch:
                             "Subsector": subsector,
                         }
                     )
+
                     progress_bar.progress(idx / total)
 
                 status_text.text("Done.")
+
                 results_df = pd.DataFrame(records)
 
                 st.subheader("Results")
                 st.dataframe(results_df)
 
-                not_found = (results_df["Source"] == "not_found").sum()
+                not_found = (
+                    results_df["Source"] == "not_found"
+                ).sum()
+
                 if not_found:
                     st.info(
-                        f"{not_found} organization(s) had no Wikipedia match "
-                        f"and were left blank."
+                        f"{not_found} organization(s) had no Wikipedia match and were left blank."
                     )
 
                 output_buffer = io.BytesIO()

@@ -1,15 +1,17 @@
 import re
 import string
 import time
-
 import json
 import os
+
 import nltk
+import pandas as pd
 import requests
+import streamlit as st
+
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
-
 
 def ensure_nltk_resources() -> None:
 
@@ -331,3 +333,60 @@ def fetch_definition_from_web(org_name: str, delay: float = 0.5) -> dict:
 
     except requests.RequestException:
         return {"definition": "", "source": "error"}
+    
+
+SECTOR_MAPPING_PATH = "data/Sector_Subsector.xlsx"
+
+
+@st.cache_data
+def load_sector_mapping():
+    """
+    Returns:
+    {
+        "Energy": ["Oil & Gas", "Renewable Energy"],
+        "Healthcare": ["Hospitals", "Pharmaceuticals"],
+        ...
+    }
+
+    Cached with st.cache_data so the Excel file is read from disk once
+    per app process and reused for every rerun/session after that
+    (Streamlit reruns the whole script on every button click, so
+    without this the file would be re-read constantly).
+    """
+
+    df = pd.read_excel(SECTOR_MAPPING_PATH)
+
+    sector_col = None
+    subsector_col = None
+
+    for col in df.columns:
+        c = str(col).strip().lower()
+
+        if c == "sector":
+            sector_col = col
+
+        elif c == "subsector":
+            subsector_col = col
+
+    if sector_col is None or subsector_col is None:
+        raise ValueError(
+            f"'{SECTOR_MAPPING_PATH}' must contain 'Sector' and 'Subsector' "
+            f"columns. Found columns: {df.columns.tolist()}"
+        )
+
+    mapping = {}
+
+    for sector, group in df.groupby(sector_col):
+
+        subsectors = (
+            group[subsector_col]
+            .dropna()
+            .astype(str)
+            .sort_values()
+            .unique()
+            .tolist()
+        )
+
+        mapping[str(sector)] = subsectors
+
+    return dict(sorted(mapping.items()))
